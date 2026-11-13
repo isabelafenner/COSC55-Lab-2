@@ -16,7 +16,8 @@ ROLE_PERMISSIONS = {
         "register_user",
         "assign_roles",
         "manage_public_keys",
-        "manage_policies"
+        "manage_policies",
+        "advance_round"
     }
 }
 

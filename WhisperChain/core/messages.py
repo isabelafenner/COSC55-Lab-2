@@ -1,205 +1,192 @@
 ########## imports ##########
 from database.db import get_connection
-from core.rbac import require_permission, has_permission
 from core.users import get_user
-from core.audit import log_event
-from core.tokens import redeem_token, compute_token_id
+from core.rbac import require_permission
 from core.crypto import encrypt_message, decrypt_message
-from core.keys import get_public_key, load_user_private_key
 
 
 '''
-OVERVIEW: Anonymous encrypted message flow
+Function: send_message
+Description:
+    Encrypts and submits an anonymous message using a valid token.
+    Stores the message and consumes the token in one transaction.
 
-    SENDER DEVICE                      SERVER                     RECIPIENT DEVICE
-    -------------                      ------                     ----------------
-    fetch recipient public key  <----  users.public_key
-    encrypt with it
-    send (token, recipient, ct) ---->  verify + spend token
-                                       store ciphertext only
-                                       (no sender, no plaintext)
-                                       get_inbox  ----------->    decrypt with own
-                                                                  private key
-
-    The server stores which inbox a message belongs to (it has to, to
-    deliver it) and which anonymous token paid for it. It never learns who
-    sent it or what it says.
-'''
-
-
-MAX_MESSAGE_CHARS = 1000
-MAX_CIPHERTEXT_BYTES = 8192
-
-
-'''
-Function: _associated_data
-Description: Context bound into the encryption. If the server moves a
-             message to another inbox or swaps its token_id, decryption
-             fails, so tampering is detected by the recipient.
-'''
-def _associated_data(recipient_id, token_id):
-    return f"whisperchain-msg|{recipient_id}|{token_id}".encode()
-
-
-'''
-Function: _get_valid_recipient
-Description: Checks that a user exists, has the recipient role, and has
-             registered a public key.
 Inputs:
-    recipient_id (int): ID of the intended recipient.
-Returns:
-    str: Recipient's PEM public key.
-Raises:
-    ValueError: If the user cannot receive messages.
-'''
-def _get_valid_recipient(recipient_id):
+    token_id (str): Anonymous messaging token.
+    recipient_id (int): ID of the intended Recipient.
+    plaintext (str): Message to send.
 
+Returns:
+    int: ID of the newly created message.
+'''
+def send_message(token_id, recipient_id, plaintext):
+
+    # verify the intended Recipient exists and has the correct role
     recipient = get_user(recipient_id)
 
-    if recipient is None or not has_permission(recipient["role"], "read_messages"):
-        raise ValueError("Invalid recipient.")
+    if recipient is None:
+        raise ValueError("Recipient does not exist.")
 
-    if recipient["public_key"] is None:
-        raise ValueError("Recipient has not registered a public key.")
+    if recipient["role"] != "recipient":
+        raise ValueError("User is not a Recipient.")
 
-    return recipient["public_key"]
+    # verify that the Recipient has a public encryption key
+    if not recipient["public_key"]:
+        raise ValueError("Recipient does not have a public key.")
 
+    # reject empty messages
+    if not isinstance(plaintext, str) or not plaintext.strip():
+        raise ValueError("Message cannot be empty.")
 
-# =====================================================================
-# Server side
-# =====================================================================
-
-'''
-Function: submit_message
-Description: SERVER SIDE. Accepts an already-encrypted message. Takes NO
-             sender ID: the token is the authorization, and it is spent here.
-Inputs:
-    token (dict): Anonymous token {round_id, serial, signature}.
-    recipient_id (int): ID of the recipient.
-    ciphertext (bytes): Encrypted message from encrypt_message.
-Returns:
-    int: ID of the stored message.
-Raises:
-    PermissionError: Invalid, expired, or already-used token.
-    ValueError: Invalid recipient or malformed ciphertext.
-'''
-def submit_message(token, recipient_id, ciphertext):
-
-    # validate everything BEFORE spending the token
-    _get_valid_recipient(recipient_id)
-
-    if not isinstance(ciphertext, bytes) or not (0 < len(ciphertext) <= MAX_CIPHERTEXT_BYTES):
-        raise ValueError("Malformed ciphertext.")
-
-    # spend the token (verifies signature, round, and single use)
-    token_id = redeem_token(token)
+    # encrypt before storing anything in the database
+    ciphertext = encrypt_message(
+        plaintext,
+        recipient["public_key"]
+    )
 
     with get_connection() as conn:
+
+        # begin a write transaction so round checks, token
+        # redemption, and message storage happen atomically
+        conn.execute("BEGIN IMMEDIATE")
+
+        # retrieve the active messaging round
+        round_record = conn.execute(
+            """
+            SELECT current_round
+            FROM system_state
+            WHERE state_id = 1
+            """
+        ).fetchone()
+
+        if round_record is None:
+            raise ValueError("Active round is not initialized.")
+
+        current_round = round_record["current_round"]
+
+        # consume a token only if it belongs to the active round,
+        # has not been used, and has not been frozen
         cursor = conn.execute(
             """
-            INSERT INTO messages (recipient_id, round_id, token_id, ciphertext)
-            VALUES (?, ?, ?, ?)
+            UPDATE tokens
+            SET used = 1
+            WHERE token_id = ?
+              AND round_id = ?
+              AND used = 0
+              AND frozen = 0
             """,
-            (recipient_id, token["round_id"], token_id, ciphertext)
+            (token_id, current_round)
         )
 
-        log_event(conn, "message_sent", "sender", f"round={token['round_id']}")
+        if cursor.rowcount != 1:
+            raise ValueError("Token is invalid, expired, used, or frozen.")
 
-    return cursor.lastrowid
+        # store the encrypted message without a Sender ID
+        cursor = conn.execute(
+            """
+            INSERT INTO messages (
+                recipient_id,
+                token_id,
+                round_id,
+                ciphertext
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                recipient_id,
+                token_id,
+                current_round,
+                ciphertext
+            )
+        )
+
+        message_id = cursor.lastrowid
+
+    return message_id
 
 
 '''
-Function: get_inbox
-Description: SERVER SIDE. Returns the encrypted messages addressed to a
-             user. Only roles with read_messages can call this, and only
-             their own messages are returned.
+Function: get_messages
+Description:
+    Retrieves encrypted messages belonging to a Recipient.
+    Does not decrypt the message contents.
+
 Inputs:
-    user_id (int): ID of the requesting user.
-Returns:
-    list: Dicts with message_id, token_id, ciphertext.
-'''
-def get_inbox(user_id):
+    recipient_id (int): ID of the Recipient.
 
-    user = get_user(user_id)
-    if user is None:
-        raise PermissionError("Invalid user.")
-    require_permission(user["role"], "read_messages")
+Returns:
+    list: Encrypted message records.
+'''
+def get_messages(recipient_id):
+
+    # verify the user exists
+    recipient = get_user(recipient_id)
+
+    if recipient is None:
+        raise ValueError("User does not exist.")
+
+    # verify Recipient permissions
+    require_permission(recipient["role"], "read_messages")
 
     with get_connection() as conn:
-        rows = conn.execute(
+
+        messages = conn.execute(
             """
-            SELECT message_id, token_id, ciphertext
+            SELECT message_id, round_id, ciphertext
             FROM messages
             WHERE recipient_id = ?
             ORDER BY message_id
             """,
-            (user_id,)
+            (recipient_id,)
         ).fetchall()
 
-        log_event(conn, "messages_delivered", "recipient", f"count={len(rows)}")
+    return [dict(message) for message in messages]
 
-    return [dict(row) for row in rows]
-
-
-# =====================================================================
-# Client side: these run on the user's device
-# =====================================================================
 
 '''
-Function: send_message
-Description: CLIENT SIDE. Encrypts a message for a recipient and submits
-             it with an anonymous token.
+Function: read_message
+Description:
+    Retrieves and decrypts a specific message for a Recipient.
+    The supplied private key must match the public key used
+    to encrypt the message.
+
 Inputs:
-    token (dict): Token from request_token.
-    recipient_id (int): ID of the recipient.
-    text (str): Message text.
+    recipient_id (int): ID of the Recipient.
+    message_id (int): ID of the message to read.
+    private_key (str): Recipient's private encryption key.
+
 Returns:
-    int: ID of the stored message.
+    str: Decrypted plaintext message.
 '''
-def send_message(token, recipient_id, text):
+def read_message(recipient_id, message_id, private_key):
 
-    # validate the message
-    if not isinstance(text, str) or not text.strip():
-        raise ValueError("Message cannot be empty.")
-    if len(text) > MAX_MESSAGE_CHARS:
-        raise ValueError(f"Message exceeds {MAX_MESSAGE_CHARS} characters.")
+    # verify the user exists
+    recipient = get_user(recipient_id)
 
-    # encrypt locally with the recipient's public key
-    public_pem = _get_valid_recipient(recipient_id)
-    token_id = compute_token_id(token)
-    ciphertext = encrypt_message(
-        public_pem, text, _associated_data(recipient_id, token_id)
+    if recipient is None:
+        raise ValueError("User does not exist.")
+
+    # verify Recipient permissions
+    require_permission(recipient["role"], "read_messages")
+
+    with get_connection() as conn:
+
+        # retrieve only messages belonging to this Recipient
+        message = conn.execute(
+            """
+            SELECT ciphertext
+            FROM messages
+            WHERE message_id = ?
+              AND recipient_id = ?
+            """,
+            (message_id, recipient_id)
+        ).fetchone()
+
+    if message is None:
+        raise ValueError("Message not found for this Recipient.")
+
+    # decrypt using the Recipient's private key
+    return decrypt_message(
+        message["ciphertext"],
+        private_key
     )
-
-    # only ciphertext leaves the device
-    return submit_message(token, recipient_id, ciphertext)
-
-
-'''
-Function: read_inbox
-Description: CLIENT SIDE. Fetches the user's encrypted messages and
-             decrypts them with the private key stored on their device.
-Inputs:
-    user_id (int): ID of the recipient.
-Returns:
-    list: Dicts with message_id and text. Messages that fail to decrypt
-          (tampered or wrong key) have text None and an error field.
-'''
-def read_inbox(user_id):
-
-    private_key = load_user_private_key(user_id)
-    inbox = []
-
-    for msg in get_inbox(user_id):
-        try:
-            text = decrypt_message(
-                private_key,
-                msg["ciphertext"],
-                _associated_data(user_id, msg["token_id"])
-            )
-            inbox.append({"message_id": msg["message_id"], "text": text})
-
-        except ValueError as error:
-            inbox.append({"message_id": msg["message_id"], "text": None, "error": str(error)})
-
-    return inbox
