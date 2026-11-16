@@ -2,6 +2,7 @@
 from database.db import get_connection
 from core.users import get_user
 from core.rbac import require_permission
+from core.audit import log_event
 
 
 '''
@@ -76,6 +77,9 @@ def advance_round(admin_id):
             WHERE state_id = 1
             """
         ).fetchone()
+
+        if result is not None:
+            log_event(conn, "round_advanced", "admin", f"round={result['current_round']}")
 
     if result is None:
         raise ValueError("Current round has not been initialized.")

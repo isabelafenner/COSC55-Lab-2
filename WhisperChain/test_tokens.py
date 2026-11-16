@@ -1,5 +1,6 @@
 ########## imports ##########
 import secrets
+import sqlite3
 
 from database.db import initialize_database, get_connection
 from core.users import register_user, get_user
@@ -9,6 +10,7 @@ from core.tokens import (
     use_token,
     freeze_token
 )
+from core.rounds import get_current_round, advance_round
 
 
 # --------------------------------------------------
@@ -60,7 +62,8 @@ recipient_id = register_user(
 
 print("\nTest 1: Token issuance")
 
-round_id = 1
+# use whatever round is currently active
+round_id = get_current_round()
 
 token = issue_token(sender_id, round_id)
 
@@ -136,7 +139,8 @@ print("PASS: Token can only be used once")
 
 print("\nTest 6: New round")
 
-new_round = 2
+# the Admin advances to the next round
+new_round = advance_round(admin_id)
 
 new_token = issue_token(sender_id, new_round)
 
@@ -198,3 +202,12 @@ with get_connection() as conn:
     assert "username" not in token_record.keys()
 
 print("PASS: Token records do not store user identities")
+
+# tokens must not keep insertion order, or row N of tokens
+# could be matched to row N of token_issuance
+with get_connection() as conn:
+    try:
+        conn.execute("SELECT rowid FROM tokens LIMIT 1")
+        print("FAIL: tokens table keeps insertion order (rowid)")
+    except sqlite3.OperationalError:
+        print("PASS: tokens stored without insertion order")

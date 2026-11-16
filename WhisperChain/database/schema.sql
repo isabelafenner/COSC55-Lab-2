@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS token_issuance (
 
 
 -- store anonymous messaging tokens
+-- WITHOUT ROWID: rows are stored by the random token_id instead of
+-- insertion order, so they can't be lined up with token_issuance rows
 CREATE TABLE IF NOT EXISTS tokens (
     token_id TEXT PRIMARY KEY,
     round_id INTEGER NOT NULL,
@@ -31,7 +33,7 @@ CREATE TABLE IF NOT EXISTS tokens (
 
     frozen INTEGER NOT NULL DEFAULT 0
         CHECK (frozen IN (0, 1))
-);
+) WITHOUT ROWID;
 
 
 -- stores encrypted messages without identifying Senders
@@ -68,3 +70,61 @@ INSERT OR IGNORE INTO system_state (
 )
 VALUES (1, 1);
 
+-- append-only audit log: role-level metadata only, never identities
+-- each entry stores the previous entry's hash, so editing or removing
+-- any entry breaks the chain (see core/audit.py: verify_audit_log)
+CREATE TABLE IF NOT EXISTS audit_log (
+    log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    action TEXT NOT NULL,
+    role TEXT NOT NULL,
+    details TEXT,
+    prev_hash TEXT NOT NULL,
+    entry_hash TEXT NOT NULL
+);
+
+
+-- block edits and deletes so the log can only grow
+CREATE TRIGGER IF NOT EXISTS audit_log_no_update
+BEFORE UPDATE ON audit_log
+BEGIN
+    SELECT RAISE(ABORT, 'audit_log is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
+BEFORE DELETE ON audit_log
+BEGIN
+    SELECT RAISE(ABORT, 'audit_log is append-only');
+END;
+
+
+-- flagged messages awaiting or after moderator review
+-- revealed_key: the one-time key for THIS message only, handed over by
+-- the Recipient so a Moderator can read and verify the flagged content
+CREATE TABLE IF NOT EXISTS flags (
+    flag_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL UNIQUE,
+    reason TEXT,
+    revealed_key TEXT NOT NULL,
+
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'upheld', 'dismissed')),
+
+    flagged_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at TEXT,
+
+    FOREIGN KEY (message_id)
+        REFERENCES messages(message_id)
+);
+
+
+-- alerts raised by automated rules (one per rule per round)
+CREATE TABLE IF NOT EXISTS alerts (
+    alert_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule TEXT NOT NULL,
+    round_id INTEGER NOT NULL,
+    details TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE (rule, round_id)
+);

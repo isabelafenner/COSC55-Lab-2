@@ -1,12 +1,14 @@
 ########## imports ##########
 from database.db import get_connection
 from core.rbac import require_permission
+from core.audit import log_event
 
 
 '''
 Function: register_user
 Description: Registers a new user in the database with an assigned role.
 Inputs:
+    admin_id (int): ID of the administrator registering the user.
     username (str): Username of the new user.
     role (str): Assigned role (sender, recipient, moderator, admin).
 Returns:
@@ -39,6 +41,9 @@ def register_user(admin_id, username, role):
             """,
             (username, role)
         )
+
+        # log the role assigned, not the username
+        log_event(conn, "user_registered", "admin", f"role={role}")
 
         # return the automatically generated user ID
         return cursor.lastrowid
@@ -130,4 +135,8 @@ def update_user_role(admin_id, user_id, new_role):
             (new_role, user_id)
         )
 
-        return cursor.rowcount > 0
+        updated = cursor.rowcount > 0
+        if updated:
+            log_event(conn, "role_changed", "admin", f"new_role={new_role}")
+
+        return updated

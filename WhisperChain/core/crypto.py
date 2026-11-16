@@ -153,3 +153,73 @@ def decrypt_message(ciphertext, private_key_pem):
     )
 
     return plaintext.decode("utf-8")
+
+
+'''
+Function: recover_message_key
+Description:
+    Recovers the one-time Fernet key of a single message using the
+    Recipient's private key. Used when flagging: revealing this key
+    exposes only this one message, never the private key itself.
+
+Inputs:
+    ciphertext (str): Encrypted message JSON.
+    private_key_pem (str): Recipient's private key.
+
+Returns:
+    str: The message's Fernet key.
+'''
+def recover_message_key(ciphertext, private_key_pem):
+
+    # load the Recipient's private key
+    private_key = serialization.load_pem_private_key(
+        private_key_pem.encode("utf-8"),
+        password=None
+    )
+
+    # unwrap the encrypted symmetric key
+    encrypted_key = base64.b64decode(
+        json.loads(ciphertext)["encrypted_key"]
+    )
+
+    symmetric_key = private_key.decrypt(
+        encrypted_key,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+
+    return symmetric_key.decode("utf-8")
+
+
+'''
+Function: decrypt_with_message_key
+Description:
+    Decrypts a message using its revealed one-time Fernet key.
+    Fernet authenticates the ciphertext, so this fails if the key
+    does not belong to this message or the message was altered.
+
+Inputs:
+    ciphertext (str): Encrypted message JSON.
+    message_key (str): Fernet key from recover_message_key.
+
+Returns:
+    str: Original plaintext message.
+
+Raises:
+    ValueError: If the key does not match the message.
+'''
+def decrypt_with_message_key(ciphertext, message_key):
+
+    try:
+        encrypted_message = json.loads(ciphertext)["encrypted_message"]
+        plaintext = Fernet(message_key.encode("utf-8")).decrypt(
+            encrypted_message.encode("utf-8")
+        )
+
+    except Exception as error:
+        raise ValueError("Key does not match this message.") from error
+
+    return plaintext.decode("utf-8")

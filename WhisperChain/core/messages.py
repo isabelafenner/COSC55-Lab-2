@@ -2,7 +2,8 @@
 from database.db import get_connection
 from core.users import get_user
 from core.rbac import require_permission
-from core.crypto import encrypt_message, decrypt_message
+from core.crypto import encrypt_message
+from core.audit import log_event
 
 
 '''
@@ -79,6 +80,17 @@ def send_message(token_id, recipient_id, plaintext):
         )
 
         if cursor.rowcount != 1:
+
+            # undo the open transaction, then record the rejection
+            # separately so the log entry survives
+            conn.rollback()
+            log_event(conn, "token_rejected", "sender", f"round={current_round}")
+            conn.commit()
+
+            # imported here to avoid a circular import
+            from core.moderation import check_alert_rules
+            check_alert_rules()
+
             raise ValueError("Token is invalid, expired, used, or frozen.")
 
         # store the encrypted message without a Sender ID
@@ -101,6 +113,9 @@ def send_message(token_id, recipient_id, plaintext):
         )
 
         message_id = cursor.lastrowid
+
+        # log the send by role only, never the Sender or the content
+        log_event(conn, "message_sent", "sender", f"round={current_round}")
 
     return message_id
 
@@ -140,25 +155,27 @@ def get_messages(recipient_id):
             (recipient_id,)
         ).fetchall()
 
+        log_event(conn, "messages_delivered", "recipient", f"count={len(messages)}")
+
     return [dict(message) for message in messages]
 
 
 '''
-Function: read_message
+Function: get_message
 Description:
-    Retrieves and decrypts a specific message for a Recipient.
-    The supplied private key must match the public key used
-    to encrypt the message.
+    SERVER SIDE. Retrieves one encrypted message belonging to a
+    Recipient. Returns ciphertext only: the server never sees the
+    private key and never decrypts. Decryption happens on the
+    Recipient's device (see core/client.py).
 
 Inputs:
     recipient_id (int): ID of the Recipient.
-    message_id (int): ID of the message to read.
-    private_key (str): Recipient's private encryption key.
+    message_id (int): ID of the message to retrieve.
 
 Returns:
-    str: Decrypted plaintext message.
+    str: Encrypted message (ciphertext).
 '''
-def read_message(recipient_id, message_id, private_key):
+def get_message(recipient_id, message_id):
 
     # verify the user exists
     recipient = get_user(recipient_id)
@@ -182,11 +199,11 @@ def read_message(recipient_id, message_id, private_key):
             (message_id, recipient_id)
         ).fetchone()
 
+        if message is not None:
+            log_event(conn, "message_read", "recipient")
+
     if message is None:
         raise ValueError("Message not found for this Recipient.")
 
-    # decrypt using the Recipient's private key
-    return decrypt_message(
-        message["ciphertext"],
-        private_key
-    )
+    # return ciphertext only
+    return message["ciphertext"]

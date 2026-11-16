@@ -8,6 +8,7 @@ from core.rbac import require_permission
 import sqlite3
 
 from core.rounds import is_active_round
+from core.audit import log_event
 
 
 '''
@@ -71,6 +72,9 @@ def issue_token(user_id, round_id):
             """,
             (token_id, round_id)
         )
+
+        # log the issuance by role only, never the Sender's identity
+        log_event(conn, "token_issued", "sender", f"round={round_id}")
 
     return token_id
 
@@ -156,7 +160,16 @@ def use_token(token_id, round_id):
         )
 
         # exactly one updated row means successful redemption
-        return cursor.rowcount == 1
+        used = cursor.rowcount == 1
+
+        log_event(
+            conn,
+            "token_used" if used else "token_rejected",
+            "sender",
+            f"round={round_id}"
+        )
+
+        return used
 
 
 '''
@@ -196,4 +209,10 @@ def freeze_token(moderator_id, token_id):
             (token_id,)
         )
 
-        return cursor.rowcount == 1
+        frozen = cursor.rowcount == 1
+
+        # log a short prefix of the token, never the full value
+        if frozen:
+            log_event(conn, "token_frozen", "moderator", f"token={token_id[:8]}")
+
+        return frozen
