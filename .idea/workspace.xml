@@ -5,13 +5,9 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="1d476fbc-4efd-4b50-a933-8d5bd02579d6" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/WhisperChain/client_keys/user_1.pem" beforeDir="false" afterPath="$PROJECT_DIR$/WhisperChain/client_keys/user_1.pem" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/WhisperChain/client_keys/user_2.pem" beforeDir="false" afterPath="$PROJECT_DIR$/WhisperChain/client_keys/user_2.pem" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/WhisperChain/client_keys/user_2_token.json" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/WhisperChain/client_keys/user_3.pem" beforeDir="false" afterPath="$PROJECT_DIR$/WhisperChain/client_keys/user_3.pem" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/WhisperChain/client_keys/user_4.pem" beforeDir="false" afterPath="$PROJECT_DIR$/WhisperChain/client_keys/user_4.pem" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/WhisperChain/data/whisperchain.db" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/WhisperChain/data/whisperchain.db" beforeDir="false" afterPath="$PROJECT_DIR$/WhisperChain/data/whisperchain.db" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
