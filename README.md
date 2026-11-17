@@ -33,7 +33,9 @@ WhisperChain/
 ├── database/
 │   ├── db.py
 │   └── schema.sql
+├── audit_log_example.md
 ├── main.py
+├── security_design_report.md
 ├── test_admin.py
 ├── test_audit.py
 ├── test_crypto.py
@@ -44,8 +46,6 @@ WhisperChain/
 ├── test_rounds.py
 ├── test_tokens.py
 ├── test_users.py
-├── audit_log_example.md
-├── security_design_report.md
 └── threat_model.md
 README.md
 ```
@@ -82,5 +82,5 @@ Follow the interactive CLI prompts to access the system's functionality.
 
 ## Security Considerations
 
-WhisperChain+ separates sender identities from message records, uses single-use tokens, and enforces role-based permissions. User authentication is not implemented, meaning user accounts are not password protected.
+WhisperChain+ separates sender identities from message records, uses single-use tokens, and enforces role-based permissions. Registered accounts receive a default password originally and then have the option to update that password.
 
