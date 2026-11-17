@@ -32,26 +32,6 @@ Senders send one anonymous, encrypted compliment per round to a Recipient. Moder
 | Audit log | `audit_log` table | Moderators |
 | Audit HMAC key | `data/audit_hmac.key` | The server process only |
 
-```mermaid
-flowchart LR
-    subgraph Device["User device (trusted)"]
-        PK["Private key<br/>client_keys/"]
-        CL["client.py<br/>decrypt, flag"]
-    end
-
-    subgraph Server["Server (trusted to run the code as written)"]
-        CORE["core modules<br/>RBAC check on every call"]
-        DB[("whisperchain.db")]
-        AK["audit_hmac.key"]
-    end
-
-    CL -- "token + ciphertext,<br/>flag key" --> CORE
-    CORE -- "ciphertext only" --> CL
-    PK --> CL
-    CORE --> DB
-    CORE --> AK
-```
-
 Plaintext and private keys exist only inside the device box. Everything that crosses into the server is either ciphertext, an anonymous token, or a single message's key revealed by its recipient when flagging.
 
 ## 3. Adversaries
