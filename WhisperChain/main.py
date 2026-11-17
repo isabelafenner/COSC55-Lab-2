@@ -18,7 +18,7 @@ import sys
 from database.db import initialize_database, get_connection
 from core.users import register_user, get_user, get_all_users, update_user_role
 from core.rounds import get_current_round, advance_round
-from core.tokens import issue_token, freeze_token
+from core.tokens import issue_token, freeze_token, validate_token
 from core.keys import setup_user_keys, reset_public_key, _private_key_path
 from core.messages import send_message
 from core.client import read_inbox, flag_message, save_token, load_token, clear_token
@@ -211,8 +211,12 @@ def current_token(user):
     round_id = get_current_round()
     saved = load_token(user["user_id"])
 
-    if saved and saved["round_id"] == round_id:
+    # use the saved token only if the server still accepts it
+    # (it may be from an old round, an old database, or frozen)
+    if saved and saved["round_id"] == round_id and validate_token(saved["token"], round_id):
         return saved["token"]
+
+    clear_token(user["user_id"])
 
     token = issue_token(user["user_id"], round_id)
     save_token(user["user_id"], round_id, token)
@@ -225,7 +229,7 @@ def sender_token_status(user):
     round_id = get_current_round()
     saved = load_token(user["user_id"])
 
-    if saved and saved["round_id"] == round_id:
+    if saved and saved["round_id"] == round_id and validate_token(saved["token"], round_id):
         print(f"  You have an unused token for round {round_id}.")
         return
 
@@ -276,7 +280,7 @@ def recipient_inbox(user):
 def recipient_flag(user):
 
     message_id = ask_int("Message number to flag: ")
-    reason = ask("Reason (optional): ") or None
+    reason = ask("Reason: ") or None
 
     flag_id = flag_message(user["user_id"], message_id, reason)
 
