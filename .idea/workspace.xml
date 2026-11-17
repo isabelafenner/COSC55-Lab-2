@@ -4,7 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="1d476fbc-4efd-4b50-a933-8d5bd02579d6" name="Changes" comment="" />
+    <list default="true" id="1d476fbc-4efd-4b50-a933-8d5bd02579d6" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/WhisperChain/client_keys/user_2_token.json" beforeDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -33,7 +35,7 @@
     "ASKED_MARK_IGNORED_FILES_AS_EXCLUDED": "true",
     "RunOnceActivity.OpenProjectViewOnStart": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
-    "git-widget-placeholder": "toddcrosenbaum-branch-1",
+    "git-widget-placeholder": "main",
     "last_opened_file_path": "/Users/toddrosenbaum/Documents/GitHub/COSC55-Lab-2"
   }
 }]]></component>
