@@ -12,20 +12,20 @@ from core.audit import log_event
 '''
 OVERVIEW: Flagging, moderator review, and alerts
 
-    FLAGGING (Recipient)
+    Flagging (recipient):
         Messages are end-to-end encrypted, so a Moderator can't read them.
         When flagging, the Recipient reveals that ONE message's one-time
         key (not their private key). The server checks the key really
         decrypts the stored ciphertext, so a Recipient can't fake the
         content of a message they're reporting.
 
-    REVIEW (Moderator)
+    Review (moderator):
         Moderators see only flagged messages, decrypted with the revealed
         key, plus the anonymous token that sent them. They mark each flag
         upheld or dismissed, and can freeze the token (core/tokens.py).
         They never see who sent a message.
 
-    ALERTS (automatic)
+    Alerts (automatic):
         Rules run after relevant events and raise at most one alert per
         rule per round:
           - flag_volume:      many messages flagged in one round
@@ -58,13 +58,13 @@ def _require_role_permission(user_id, action):
 
 
 # =====================================================================
-# Flagging (Recipient)
+# Flagging (recipient)
 # =====================================================================
 
 '''
 Function: submit_flag
 Description:
-    SERVER SIDE. Records a Recipient's report of an abusive message.
+    Server side. Records a Recipient's report of an abusive message.
     The revealed key must decrypt the stored message, which proves the
     reported content is what was actually sent.
 
@@ -128,7 +128,7 @@ def submit_flag(recipient_id, message_id, revealed_key, reason=None):
 
 
 # =====================================================================
-# Review (Moderator)
+# Review (moderator)
 # =====================================================================
 
 '''

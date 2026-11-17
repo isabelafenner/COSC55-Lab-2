@@ -280,7 +280,7 @@ def recipient_inbox(user):
 def recipient_flag(user):
 
     message_id = ask_int("Message number to flag: ")
-    reason = ask("Reason: ") or None
+    reason = ask("Reason (optional): ") or None
 
     flag_id = flag_message(user["user_id"], message_id, reason)
 
@@ -420,7 +420,7 @@ def admin_reset_password(user):
     default = assign_default_password(user["user_id"], target["user_id"])
 
     print(f"  '{target['username']}' reset to the default password ('{default}').")
-    print("  Any lockout is cleared. They must change it at next login.")
+    print("  They must change it at next login.")
 
 
 # =====================================================================
@@ -521,9 +521,9 @@ def main():
 
     initialize_database()
 
-    print("=" * 50)
+    print("*" * 50)
     print("WhisperChain+")
-    print("=" * 50)
+    print("*" * 50)
 
     bootstrap_admin()
 

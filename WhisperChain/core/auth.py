@@ -2,7 +2,6 @@
 import hashlib
 import hmac
 import secrets
-from datetime import datetime, timedelta, timezone
 
 from database.db import get_connection
 from core.rbac import require_permission
@@ -25,9 +24,6 @@ OVERVIEW: Password authentication
         Risk: anyone who knows the default can log in as an account that
         hasn't logged in yet (see THREAT_MODEL.md, T18).
 
-    BRUTE FORCE
-        5 wrong passwords in a row lock the account for 5 minutes.
-
     USERNAME ENUMERATION
         A wrong username and a wrong password return the same error, and a
         wrong username still runs a full scrypt check so the response time
@@ -36,8 +32,6 @@ OVERVIEW: Password authentication
 
 
 MAX_PASSWORD_LENGTH = 128
-MAX_FAILED_LOGINS = 5
-LOCKOUT_MINUTES = 5
 
 # scrypt cost parameters (N, r, p): ~16 MB of memory per hash
 SCRYPT_N, SCRYPT_R, SCRYPT_P = 2 ** 14, 8, 1
@@ -102,15 +96,6 @@ _DUMMY_HASH = hash_password(secrets.token_urlsafe(16))
 # Helpers
 # =====================================================================
 
-'''current UTC time as stored in the database'''
-def _now():
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
-def _format(moment):
-    return moment.strftime("%Y-%m-%d %H:%M:%S")
-
-
 '''reject passwords that are empty, too long, or not text'''
 def _validate_new_password(password):
 
@@ -129,7 +114,7 @@ def _get_credentials(conn, user_id=None, username=None):
     return conn.execute(
         f"""
         SELECT user_id, username, role, password_hash,
-               must_change_password, failed_logins, locked_until
+               must_change_password
         FROM users
         WHERE {column} = ?
         """,
@@ -143,7 +128,7 @@ def _get_credentials(conn, user_id=None, username=None):
 
 '''
 Function: set_password
-Description: Stores a new password for a user and clears any lockout.
+Description: Stores a new password for a user.
              Used for the first admin and by change_password; the CLI
              only reaches it after the user is authenticated.
 Inputs:
@@ -159,8 +144,7 @@ def set_password(user_id, password, must_change=False):
         cursor = conn.execute(
             """
             UPDATE users
-            SET password_hash = ?, must_change_password = ?,
-                failed_logins = 0, locked_until = NULL
+            SET password_hash = ?, must_change_password = ?
             WHERE user_id = ?
             """,
             (hash_password(password), int(must_change), user_id)
@@ -246,8 +230,7 @@ Inputs:
 Returns:
     dict: user_id, username, role, must_change_password.
 Raises:
-    PermissionError: Wrong username or password (same message for both),
-                     or the account is locked.
+    PermissionError: Wrong username or password (same message for both).
 '''
 def authenticate(username, password):
 
@@ -263,44 +246,14 @@ def authenticate(username, password):
 
         raise PermissionError(GENERIC_LOGIN_ERROR)
 
-    # refuse while locked, without checking the password
-    if user["locked_until"]:
-        locked_until = datetime.strptime(user["locked_until"], "%Y-%m-%d %H:%M:%S")
-
-        if _now() < locked_until:
-            minutes = int((locked_until - _now()).total_seconds() // 60) + 1
-            raise PermissionError(
-                f"Account locked after too many failed attempts. "
-                f"Try again in {minutes} minute(s)."
-            )
-
     if not verify_password(password, user["password_hash"]):
 
-        failures = user["failed_logins"] + 1
-        locked_until = None
-
-        if failures >= MAX_FAILED_LOGINS:
-            locked_until = _format(_now() + timedelta(minutes=LOCKOUT_MINUTES))
-            failures = 0
-
         with get_connection() as conn:
-            conn.execute(
-                "UPDATE users SET failed_logins = ?, locked_until = ? WHERE user_id = ?",
-                (failures, locked_until, user["user_id"])
-            )
             log_event(conn, "login_failed", user["role"])
-
-            if locked_until:
-                log_event(conn, "account_locked", user["role"], f"minutes={LOCKOUT_MINUTES}")
 
         raise PermissionError(GENERIC_LOGIN_ERROR)
 
-    # success: reset the failure count
     with get_connection() as conn:
-        conn.execute(
-            "UPDATE users SET failed_logins = 0, locked_until = NULL WHERE user_id = ?",
-            (user["user_id"],)
-        )
         log_event(conn, "login_success", user["role"])
 
     return {

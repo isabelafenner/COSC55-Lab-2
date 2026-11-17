@@ -163,7 +163,7 @@ def get_messages(recipient_id):
 '''
 Function: get_message
 Description:
-    SERVER SIDE. Retrieves one encrypted message belonging to a
+    Server side. Retrieves one encrypted message belonging to a
     Recipient. Returns ciphertext only: the server never sees the
     private key and never decrypts. Decryption happens on the
     Recipient's device (see core/client.py).

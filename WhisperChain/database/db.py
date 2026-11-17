@@ -42,8 +42,6 @@ def _add_missing_user_columns(conn):
     new_columns = {
         "password_hash": "TEXT",
         "must_change_password": "INTEGER NOT NULL DEFAULT 0",
-        "failed_logins": "INTEGER NOT NULL DEFAULT 0",
-        "locked_until": "TEXT",
     }
 
     for name, definition in new_columns.items():
