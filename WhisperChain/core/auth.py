@@ -22,7 +22,7 @@ OVERVIEW: Password authentication
         (DEFAULT_PASSWORD) and must replace it at first login. Admins never
         learn the password a user chooses.
         Risk: anyone who knows the default can log in as an account that
-        hasn't logged in yet (see THREAT_MODEL.md, T18).
+        hasn't logged in yet.
 
     USERNAME ENUMERATION
         A wrong username and a wrong password return the same error, and a
