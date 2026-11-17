@@ -8,8 +8,8 @@ action is still checked by RBAC on the server side.
 Usage:
     python main.py
 
-Prototype note: login is by username only (no password). Authentication
-is out of scope for this project; see THREAT_MODEL.md.
+Every user logs in with a username and password. New users receive a
+default password and must change it at first login.
 '''
 
 ########## imports ##########
@@ -24,6 +24,12 @@ from core.messages import send_message
 from core.client import read_inbox, flag_message, save_token, load_token, clear_token
 from core.moderation import get_flag_queue, review_flag, get_alerts
 from core.audit import log_event, get_audit_log, verify_audit_log
+from core.auth import (
+    authenticate,
+    set_password,
+    change_password,
+    assign_default_password
+)
 
 
 ROLES = ("sender", "recipient", "moderator", "admin")
@@ -40,6 +46,22 @@ def ask(prompt):
     except EOFError:
         print("\nGoodbye.")
         sys.exit(0)
+
+
+'''read a password (shown as typed)'''
+def ask_password(prompt):
+    return ask(prompt)
+
+
+'''ask for a new password twice; raise ValueError if they differ'''
+def ask_new_password():
+    first = ask_password("New password (8+ characters): ")
+    second = ask_password("Repeat new password: ")
+
+    if first != second:
+        raise ValueError("Passwords don't match.")
+
+    return first
 
 
 '''read a whole number, or raise ValueError'''
@@ -76,37 +98,90 @@ def require_user(username):
 
 '''
 Function: bootstrap_admin
-Description: On a brand-new system, creates the first administrator.
-             This is the only account created without an existing admin.
+Description: Runs when no administrator can log in: on a brand-new
+             system, or on a database created before passwords existed.
+             Creates the first admin (or gives an existing admin a
+             password). This is the only account set up without an admin.
 '''
 def bootstrap_admin():
 
     with get_connection() as conn:
-        admin = conn.execute(
-            "SELECT 1 FROM users WHERE role = 'admin' LIMIT 1"
+        ready = conn.execute(
+            "SELECT 1 FROM users WHERE role = 'admin' AND password_hash IS NOT NULL LIMIT 1"
         ).fetchone()
 
-    if admin:
+    if ready:
         return
 
-    print("\nNo administrator exists yet. Create the first admin account.")
+    print("\nNo administrator can log in yet. Set up the first admin account.")
 
     while True:
         username = ask("Admin username: ")
+        existing = find_user(username) if username else None
 
-        if username:
+        if not username:
+            print("  Username cannot be empty.")
+        elif existing and existing["role"] != "admin":
+            print(f"  '{username}' exists but isn't an admin. Choose another name.")
+        else:
             break
 
-        print("  Username cannot be empty.")
+    while True:
+        try:
+            password = ask_new_password()
+            break
+        except ValueError as error:
+            print(f"  ! {error}")
 
-    with get_connection() as conn:
-        conn.execute(
-            "INSERT INTO users (username, role) VALUES (?, ?)",
-            (username, "admin")
-        )
-        log_event(conn, "user_registered", "admin", "role=admin bootstrap")
+    if existing is None:
+        with get_connection() as conn:
+            user_id = conn.execute(
+                "INSERT INTO users (username, role) VALUES (?, ?)",
+                (username, "admin")
+            ).lastrowid
+            log_event(conn, "user_registered", "admin", "role=admin bootstrap")
+    else:
+        user_id = existing["user_id"]
 
-    print(f"  Admin '{username}' created. Log in with that username.")
+    try:
+        set_password(user_id, password)
+    except ValueError as error:
+        # password rejected (e.g. too short): start the setup again
+        print(f"  ! {error}")
+        return bootstrap_admin()
+
+    print(f"  Admin '{username}' is ready. Log in with that username and password.")
+
+
+'''
+Function: login
+Description: Asks for a username and password. Forces a password change
+             if the user still has the default password.
+Returns:
+    int: The logged-in user's ID, or None if login failed.
+'''
+def login(username):
+
+    password = ask_password("Password: ")
+
+    try:
+        user = authenticate(username, password)
+    except PermissionError as error:
+        print(f"  ! {error}")
+        return None
+
+    if user["must_change_password"]:
+        print("  You're still using the default password. Choose your own to continue.")
+
+        while True:
+            try:
+                change_password(user["user_id"], password, ask_new_password())
+                print("  Password changed.")
+                break
+            except (PermissionError, ValueError) as error:
+                print(f"  ! {error}")
+
+    return user["user_id"]
 
 
 '''
@@ -305,9 +380,11 @@ def admin_register(user):
     if find_user(username):
         raise ValueError(f"Username '{username}' is taken.")
 
-    register_user(user["user_id"], username, role)
+    new_id = register_user(user["user_id"], username, role)
+    default = assign_default_password(user["user_id"], new_id)
 
     print(f"  Registered '{username}' as {role}.")
+    print(f"  Their password is the default ('{default}'). They must change it at first login.")
 
 
 def admin_change_role(user):
@@ -333,6 +410,27 @@ def admin_reset_key(user):
         print(f"  '{target['username']}' had no key registered.")
 
 
+def admin_reset_password(user):
+
+    target = require_user(ask("Username: "))
+    default = assign_default_password(user["user_id"], target["user_id"])
+
+    print(f"  '{target['username']}' reset to the default password ('{default}').")
+    print("  Any lockout is cleared. They must change it at next login.")
+
+
+# =====================================================================
+# Every role
+# =====================================================================
+
+def change_my_password(user):
+
+    current = ask_password("Current password: ")
+    change_password(user["user_id"], current, ask_new_password())
+
+    print("  Password changed.")
+
+
 def admin_advance_round(user):
 
     if ask("Start a new round? Unused tokens will expire. (y/n): ").lower() != "y":
@@ -346,7 +444,7 @@ def admin_advance_round(user):
 # Menus
 # =====================================================================
 
-# each role's menu: (label, action)
+# each role's menu: (label, action); every role also gets COMMON_MENU
 MENUS = {
     "sender": [
         ("Get / check my token for this round", sender_token_status),
@@ -368,9 +466,15 @@ MENUS = {
         ("Register a user", admin_register),
         ("Change a user's role", admin_change_role),
         ("Reset a user's public key", admin_reset_key),
+        ("Reset a user's password", admin_reset_password),
         ("Start a new round", admin_advance_round),
     ],
 }
+
+
+COMMON_MENU = [
+    ("Change my password", change_my_password),
+]
 
 
 '''
@@ -383,7 +487,7 @@ def session(user_id):
 
         # reload each time, in case an admin changed this user's role
         user = get_user(user_id)
-        menu = MENUS[user["role"]]
+        menu = MENUS[user["role"]] + COMMON_MENU
 
         print(f"\n[{user['username']} | {user['role']} | round {get_current_round()}]")
 
@@ -413,9 +517,9 @@ def main():
 
     initialize_database()
 
-    print("=" * 50)
+    print("*" * 50)
     print("WhisperChain+")
-    print("=" * 50)
+    print("*" * 50)
 
     bootstrap_admin()
 
@@ -427,15 +531,16 @@ def main():
             print("Goodbye.")
             return
 
-        user = find_user(username)
+        user_id = login(username)
 
-        if user is None:
-            print("  No such user.")
+        if user_id is None:
             continue
+
+        user = get_user(user_id)
 
         print(f"  Welcome, {user['username']}.")
         ensure_keys(user)
-        session(user["user_id"])
+        session(user_id)
 
 
 if __name__ == "__main__":

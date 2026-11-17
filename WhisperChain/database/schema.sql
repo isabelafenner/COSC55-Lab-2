@@ -1,11 +1,19 @@
--- track user, ID, role, and public key
+-- track user, ID, role, public key, and login credentials
+--   password_hash:        scrypt hash with its own salt (never plaintext)
+--   must_change_password: 1 while the user still has a temporary password
+--   failed_logins:        consecutive wrong passwords
+--   locked_until:         UTC time the lockout ends, if locked
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
     role TEXT NOT NULL CHECK (
         role IN ('sender', 'recipient', 'moderator', 'admin')
     ),
-    public_key TEXT
+    public_key TEXT,
+    password_hash TEXT,
+    must_change_password INTEGER NOT NULL DEFAULT 0,
+    failed_logins INTEGER NOT NULL DEFAULT 0,
+    locked_until TEXT
 );
 
 

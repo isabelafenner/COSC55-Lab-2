@@ -17,7 +17,8 @@ ROLE_PERMISSIONS = {
         "assign_roles",
         "manage_public_keys",
         "manage_policies",
-        "advance_round"
+        "advance_round",
+        "reset_passwords"
     }
 }
 

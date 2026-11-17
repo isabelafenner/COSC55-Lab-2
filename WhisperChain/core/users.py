@@ -64,9 +64,10 @@ def get_user(user_id):
     with get_connection() as conn:
 
         # search for the user with the matching ID
+        # public columns only: password hashes stay inside core/auth.py
         user = conn.execute(
             """
-            SELECT *
+            SELECT user_id, username, role, public_key
             FROM users
             WHERE user_id = ?
             """,
@@ -91,9 +92,10 @@ def get_all_users():
     with get_connection() as conn:
 
         # retrieve all rows from the users table
+        # public columns only: password hashes stay inside core/auth.py
         users = conn.execute(
             """
-            SELECT *
+            SELECT user_id, username, role, public_key
             FROM users
             """
         ).fetchall()
