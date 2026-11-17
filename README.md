@@ -33,9 +33,7 @@ WhisperChain/
 ├── database/
 │   ├── db.py
 │   └── schema.sql
-├── audit_log_example.md
 ├── main.py
-├── security_design_report.md
 ├── test_admin.py
 ├── test_audit.py
 ├── test_crypto.py
@@ -45,8 +43,7 @@ WhisperChain/
 ├── test_rbac.py
 ├── test_rounds.py
 ├── test_tokens.py
-├── test_users.py
-└── threat_model.md
+└── test_users.py
 README.md
 ```
 
