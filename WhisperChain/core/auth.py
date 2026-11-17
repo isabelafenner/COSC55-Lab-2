@@ -35,7 +35,6 @@ OVERVIEW: Password authentication
 '''
 
 
-MIN_PASSWORD_LENGTH = 8
 MAX_PASSWORD_LENGTH = 128
 MAX_FAILED_LOGINS = 5
 LOCKOUT_MINUTES = 5
@@ -112,11 +111,11 @@ def _format(moment):
     return moment.strftime("%Y-%m-%d %H:%M:%S")
 
 
-'''reject passwords that are too short, too long, or not text'''
+'''reject passwords that are empty, too long, or not text'''
 def _validate_new_password(password):
 
-    if not isinstance(password, str) or len(password) < MIN_PASSWORD_LENGTH:
-        raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
+    if not isinstance(password, str) or not password:
+        raise ValueError("Password cannot be empty.")
 
     if len(password) > MAX_PASSWORD_LENGTH:
         raise ValueError(f"Password must be at most {MAX_PASSWORD_LENGTH} characters.")

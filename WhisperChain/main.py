@@ -55,7 +55,7 @@ def ask_password(prompt):
 
 '''ask for a new password twice; raise ValueError if they differ'''
 def ask_new_password():
-    first = ask_password("New password (8+ characters): ")
+    first = ask_password("New password: ")
     second = ask_password("Repeat new password: ")
 
     if first != second:
@@ -517,9 +517,9 @@ def main():
 
     initialize_database()
 
-    print("*" * 50)
+    print("=" * 50)
     print("WhisperChain+")
-    print("*" * 50)
+    print("=" * 50)
 
     bootstrap_admin()
 
