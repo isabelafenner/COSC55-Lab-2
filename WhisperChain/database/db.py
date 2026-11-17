@@ -27,8 +27,30 @@ def initialize_database():
 
         conn.executescript(schema)
 
+        # add login columns to a users table created before passwords existed
+        _add_missing_user_columns(conn)
+
+
+'''
+add columns that were introduced after a database was first created
+(CREATE TABLE IF NOT EXISTS never changes an existing table)
+'''
+def _add_missing_user_columns(conn):
+
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+
+    new_columns = {
+        "password_hash": "TEXT",
+        "must_change_password": "INTEGER NOT NULL DEFAULT 0",
+        "failed_logins": "INTEGER NOT NULL DEFAULT 0",
+        "locked_until": "TEXT",
+    }
+
+    for name, definition in new_columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {name} {definition}")
+
 
 if __name__ == "__main__":
     initialize_database()
     print("Database initialized successfully")
-

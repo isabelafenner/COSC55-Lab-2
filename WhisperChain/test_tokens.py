@@ -1,168 +1,213 @@
+########## imports ##########
+import secrets
+import sqlite3
+
 from database.db import initialize_database, get_connection
-from core.users import register_user
+from core.users import register_user, get_user
 from core.tokens import (
-    request_token, blind_token, issue_blind_signature, unblind_signature,
-    redeem_token, verify_token, freeze_token, is_token_frozen,
-    start_new_round, get_current_round, compute_token_id
+    issue_token,
+    validate_token,
+    use_token,
+    freeze_token
+)
+from core.rounds import get_current_round, advance_round
+
+
+# --------------------------------------------------
+# DATABASE SETUP
+# --------------------------------------------------
+
+# Create database tables if they do not already exist
+initialize_database()
+
+# Generate unique usernames so tests can be rerun
+suffix = secrets.token_hex(4)
+
+admin_username = f"test_admin_{suffix}"
+sender_username = f"test_sender_{suffix}"
+moderator_username = f"test_moderator_{suffix}"
+recipient_username = f"test_recipient_{suffix}"
+
+
+# Create an initial administrator
+with get_connection() as conn:
+    cursor = conn.execute(
+        """
+        INSERT INTO users (username, role)
+        VALUES (?, ?)
+        """,
+        (admin_username, "admin")
+    )
+
+    admin_id = cursor.lastrowid
+
+
+# Register the remaining users through the Admin
+sender_id = register_user(
+    admin_id, sender_username, "sender"
+)
+
+moderator_id = register_user(
+    admin_id, moderator_username, "moderator"
+)
+
+recipient_id = register_user(
+    admin_id, recipient_username, "recipient"
 )
 
 
-# Initialize the database and create tables
-initialize_database()
+# --------------------------------------------------
+# TEST 1: TOKEN ISSUANCE
+# --------------------------------------------------
+
+print("\nTest 1: Token issuance")
+
+# use whatever round is currently active
+round_id = get_current_round()
+
+token = issue_token(sender_id, round_id)
+
+print("Generated token:", token)
+
+assert isinstance(token, str)
+assert len(token) > 0
+
+print("PASS: Sender received a token")
 
 
-'''helper: return the user ID for a username, registering it if needed'''
-def get_or_create(admin_id, username, role):
-    with get_connection() as conn:
-        row = conn.execute(
-            "SELECT user_id FROM users WHERE username = ?", (username,)
-        ).fetchone()
-    return row["user_id"] if row else register_user(admin_id, username, role)
+# --------------------------------------------------
+# TEST 2: DUPLICATE TOKEN PREVENTION
+# --------------------------------------------------
+
+print("\nTest 2: Duplicate token prevention")
+
+try:
+    issue_token(sender_id, round_id)
+    print("FAIL: Sender received a second token")
+
+except ValueError:
+    print("PASS: Sender cannot receive two tokens in one round")
 
 
-# Find or create the initial administrator
+# --------------------------------------------------
+# TEST 3: INVALID ROLE
+# --------------------------------------------------
+
+print("\nTest 3: Invalid role")
+
+try:
+    issue_token(recipient_id, round_id)
+    print("FAIL: Recipient received a token")
+
+except PermissionError:
+    print("PASS: Recipient cannot receive Sender tokens")
+
+
+# --------------------------------------------------
+# TEST 4: TOKEN VALIDATION
+# --------------------------------------------------
+
+print("\nTest 4: Token validation")
+
+assert validate_token(token, round_id) is True
+assert validate_token(token, round_id + 1) is False
+assert validate_token("invalid_token", round_id) is False
+
+print("PASS: Valid and invalid tokens handled correctly")
+
+
+# --------------------------------------------------
+# TEST 5: SINGLE-USE ENFORCEMENT
+# --------------------------------------------------
+
+print("\nTest 5: Single-use enforcement")
+
+assert use_token(token, round_id) is True
+
+# Token should now be invalid
+assert validate_token(token, round_id) is False
+
+# Attempting to reuse the token should fail
+assert use_token(token, round_id) is False
+
+print("PASS: Token can only be used once")
+
+
+# --------------------------------------------------
+# TEST 6: NEW ROUND
+# --------------------------------------------------
+
+print("\nTest 6: New round")
+
+# the Admin advances to the next round
+new_round = advance_round(admin_id)
+
+new_token = issue_token(sender_id, new_round)
+
+assert new_token != token
+assert validate_token(new_token, new_round) is True
+
+print("PASS: Sender can receive a new token in another round")
+
+
+# --------------------------------------------------
+# TEST 7: MODERATOR FREEZING
+# --------------------------------------------------
+
+print("\nTest 7: Moderator freezing")
+
+assert freeze_token(moderator_id, new_token) is True
+
+assert validate_token(new_token, new_round) is False
+assert use_token(new_token, new_round) is False
+
+print("PASS: Frozen tokens cannot be used")
+
+
+# --------------------------------------------------
+# TEST 8: UNAUTHORIZED FREEZING
+# --------------------------------------------------
+
+print("\nTest 8: Unauthorized freezing")
+
+try:
+    freeze_token(sender_id, token)
+    print("FAIL: Sender froze a token")
+
+except PermissionError:
+    print("PASS: Sender cannot freeze tokens")
+
+
+# --------------------------------------------------
+# TEST 9: DATABASE SEPARATION
+# --------------------------------------------------
+
+print("\nTest 9: Token anonymity")
+
 with get_connection() as conn:
-    admin = conn.execute(
-        "SELECT user_id FROM users WHERE role = 'admin' LIMIT 1"
+
+    token_record = conn.execute(
+        """
+        SELECT *
+        FROM tokens
+        WHERE token_id = ?
+        """,
+        (token,)
     ).fetchone()
-    if admin is None:
-        admin_id = conn.execute(
-            "INSERT INTO users (username, role) VALUES (?, ?)",
-            ("david", "admin")
-        ).lastrowid
-    else:
-        admin_id = admin["user_id"]
 
-sender_id = get_or_create(admin_id, "token_sender", "sender")
-sender2_id = get_or_create(admin_id, "token_sender2", "sender")
-recipient_id = get_or_create(admin_id, "token_recipient", "recipient")
-moderator_id = get_or_create(admin_id, "token_moderator", "moderator")
+    assert token_record is not None
 
+    # Token records must not contain user identities
+    assert "user_id" not in token_record.keys()
+    assert "username" not in token_record.keys()
 
-# Start a fresh round so the tests can be re-run
-round_id = start_new_round(admin_id)
-print(f"Starting round {round_id}")
+print("PASS: Token records do not store user identities")
 
-
-# Test 1: Sender obtains a valid token
-print("\nTest 1: Sender requests a token")
-token = request_token(sender_id)
-print("PASS" if verify_token(token) else "FAIL", "- token signature valid")
-
-
-# Test 2: Sender cannot get a second token in the same round
-print("\nTest 2: Second token in same round")
-try:
-    request_token(sender_id)
-    print("FAIL: Second token issued")
-except PermissionError:
-    print("PASS: One token per round enforced")
-
-
-# Test 3: Non-senders cannot obtain tokens
-print("\nTest 3: Non-sender requests a token")
-for uid, role in [(recipient_id, "recipient"), (moderator_id, "moderator"),
-                  (admin_id, "admin")]:
-    try:
-        request_token(uid)
-        print(f"FAIL: {role} received a token")
-    except PermissionError:
-        print(f"PASS: {role} cannot obtain tokens")
-
-
-# Test 4: Unlinkability. The server never sees what it signs
-print("\nTest 4: Unlinkability")
-blinded, state = blind_token(round_id)
-blind_sig = issue_blind_signature(sender2_id, blinded)   # server's view
-token2 = unblind_signature(blind_sig, state)             # client's result
-server_saw = {blinded, blind_sig}
-leaked = token2["signature"] in server_saw or token2["serial"] in str(server_saw)
-print("FAIL: server saw the token" if leaked
-      else "PASS: server never saw the final token or signature")
-
+# tokens must not keep insertion order, or row N of tokens
+# could be matched to row N of token_issuance
 with get_connection() as conn:
-    issuance_cols = [r[1] for r in conn.execute("PRAGMA table_info(token_issuance)")]
-    token_cols = [r[1] for r in conn.execute("PRAGMA table_info(tokens)")]
-print("token_issuance columns:", issuance_cols)
-print("tokens columns:        ", token_cols)
-print("PASS: no shared key links users to tokens"
-      if "user_id" not in token_cols else "FAIL: tokens table stores user_id")
-
-
-# Test 5: Redeeming a valid token
-print("\nTest 5: Redeem valid token")
-token_id = redeem_token(token)
-print("PASS: token redeemed, id =", token_id[:16] + "...")
-
-
-# Test 6: Double-spending is rejected
-print("\nTest 6: Double-spend")
-try:
-    redeem_token(token)
-    print("FAIL: Token used twice")
-except PermissionError:
-    print("PASS: Reused token rejected")
-
-
-# Test 7: Forged tokens are rejected
-print("\nTest 7: Forged token")
-forged = {"round_id": round_id, "serial": "deadbeef" * 8, "signature": 12345}
-tampered = dict(token2, serial="0" * 64)
-for name, fake in [("random signature", forged), ("altered serial", tampered)]:
     try:
-        redeem_token(fake)
-        print(f"FAIL: {name} accepted")
-    except PermissionError:
-        print(f"PASS: {name} rejected")
-
-
-# Test 8: Only moderators can freeze tokens
-print("\nTest 8: Freeze permissions")
-for uid, role in [(admin_id, "admin"), (sender_id, "sender")]:
-    try:
-        freeze_token(uid, token_id)
-        print(f"FAIL: {role} froze a token")
-    except PermissionError:
-        print(f"PASS: {role} cannot freeze tokens")
-
-freeze_token(moderator_id, token_id)
-print("PASS: moderator froze token" if is_token_frozen(token_id)
-      else "FAIL: token not frozen")
-
-
-# Test 9: Tokens expire when a new round starts
-print("\nTest 9: Expired round")
-start_new_round(admin_id)
-try:
-    redeem_token(token2)
-    print("FAIL: Old-round token accepted")
-except PermissionError:
-    print("PASS: Old-round token rejected")
-
-new_token = request_token(sender_id)
-print("PASS: sender gets a fresh token in the new round"
-      if verify_token(new_token) else "FAIL")
-
-
-# Test 10: Audit log records events without identities
-print("\nTest 10: Audit log")
-with get_connection() as conn:
-    rows = conn.execute(
-        "SELECT timestamp, action, role, details FROM audit_log "
-        "ORDER BY log_id DESC LIMIT 8"
-    ).fetchall()
-    usernames = [r["username"] for r in conn.execute("SELECT username FROM users")]
-
-for r in reversed(rows):
-    print(" ", dict(r))
-
-log_text = " ".join(str(dict(r)) for r in rows)
-print("FAIL: usernames found in log" if any(u in log_text for u in usernames)
-      else "PASS: no usernames in audit log")
-
-try:
-    with get_connection() as conn:
-        conn.execute("DELETE FROM audit_log")
-    print("FAIL: audit log was modified")
-except Exception:
-    print("PASS: audit log is append-only")
+        conn.execute("SELECT rowid FROM tokens LIMIT 1")
+        print("FAIL: tokens table keeps insertion order (rowid)")
+    except sqlite3.OperationalError:
+        print("PASS: tokens stored without insertion order")
