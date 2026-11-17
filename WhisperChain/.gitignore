@@ -1,13 +1,19 @@
-data/audit_hmac.key
-client_keys/
-
-# Python cache
+# Python
 __pycache__/
 *.pyc
-
-# SQLite databases
-*.db
 
 # Virtual environments
 venv/
 .venv/
+
+# PyCharm
+.idea/
+
+# SQLite databases
+*.db
+
+# Generated cryptographic keys
+*.pem
+
+# macOS
+.DS_Store
